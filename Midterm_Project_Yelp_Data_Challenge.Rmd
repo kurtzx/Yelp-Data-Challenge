@@ -1,0 +1,686 @@
+---
+title: "Midterm Project: Yelp Data Challenge"
+author: "Xiang Zhao"
+date: "12/2/2017"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(dplyr)
+library(tidyr)
+library(lme4)
+library(VGAM)
+library(ggplot2)
+library(arm)
+library(knitr)
+library(grid)
+library(gridExtra)
+library(ordinal)
+```
+
+# 1. Introduction
+
+##Yelp is a website and also an app collecting the informations of business holders and users. With the increasing population from asia, the number of asian restaurants rising quickly and have been more popular than before. For asian restaurants' holders, in order to offer a better quality for customers and making more profits, analyzing the relationship between the rate of restaurants and restaurants' and users' informations is important. So, I collected the data from Yelp using SQL in R and filter four styles of restaurants, Chinese, Japanese, Korean and Southeast Asian restaurants with their attributes like price range and noise level and so on to fit several models to find the relationship between the rate and restaurants' and users' informations.
+
+##At the beginning, I collected the data with all the informations and attributes of restaurants and informations of users. I filter the Chinses, Japanese, Korean and Southeast Asian restaurants with all their informations first. Then I filter six attributes:whether a restaurant has free/paid/no WiFi, the price range of the restaurant, the choices of parking of a restaurant, the noise level of a restaurant, whether a restaurant has a TV or not and whether a restaurant has outdoor seating or not. Next I combined the 'attributes' dataset with 'business' dataset, which gives a whole dataset containing all the informations and attributes of four styles of restaurants. Later, I filter the stars rated by users from 'review' dataset and join it with the 'user' dataset containing users' informations. Finally I join the two datasets of users& reviews and restaurants' informations into one dataset and named it "yelp" which has 472741 rows and 22 variables after cleaning all the NAs.
+
+##After getting the clean dataset, I first did EDA especially on the relationships between predictors and response graphically. Then I designed several models to analyze and check these potential relationships statistically and numerically. Finally I summarized the conclusions.
+
+\newpage
+# 2. Data & Method
+
+##2.1 Data source
+
+###The data is from yelp: https://www.yelp.com/dataset/challenge.
+###Due to the huge size of dataset after filtering, I saved the filtered dataset into RDS file and reread it in another Rmd file then analyzing. If you need to see the code of reading and cleaning the data, look at 'Data collecting & cleaning.Rmd'.
+
+###Part of data shows below:
+###1st-5th columns:
+```{r}
+yelp <- readRDS("restaurants_users.rds")
+kable(head(yelp[,1:5]))
+```
+
+###6th-9th columns:
+
+```{r}
+kable(head(yelp[,6:9]))
+```
+
+###10th-13rd columns:
+
+```{r}
+kable(head(yelp[,10:14]))
+```
+
+###15th-17th columns:
+
+```{r}
+kable(head(yelp[,15:17]))
+```
+
+###18th-22nd columns:
+
+```{r}
+kable(head(yelp[,18:22]))
+```
+
+```{r}
+#After checking the dataset for inputting errors, I found 3 data points with unusual format in 'restaurant_state'. So I delect these 3 rows.
+#yelp%>%
+#  count(restaurant_state)
+yelp$restaurant_state[yelp$restaurant_state == "01"] <- NA
+yelp <- na.omit(yelp)
+#Sampel the subset of data to fit the model.
+set.seed(190)
+mysample <- yelp[sample(1:nrow(yelp),1000,replace = F),]
+saveRDS(mysample,"mysample.rds")
+```
+
+##2.2 Method
+
+###Tools: SQL, R, csv, RDS, online searching
+###Packages & Functions: ggplot2::ggplot, lme4::lmer&glmer, VGAM::vglm
+###Models: Multilevel linear model, ordered categorical regression
+
+\newpage
+# 3.EDA
+
+##3.1 Histogram of stars rated by users toward each four styles of restaurants
+
+```{r}
+chinese <- yelp%>%
+  filter(restaurant_style == "Chinese")
+
+japanese <- yelp%>%
+  filter(restaurant_style == "Japanese")
+
+korean <- yelp%>%
+  filter(restaurant_style == "Korean")
+
+se_asian <- yelp%>%
+  filter(restaurant_style == "Southeast Asian")
+```
+
+```{r,fig.height=5,fig.width=8}
+par(mfrow=c(2,2))
+hist.1 <- hist(chinese$user_stars)
+abline(v = median(chinese$user_stars), col = "blue", lwd = 2)
+abline(v = mean(chinese$user_stars), col = "red", lwd = 2)
+hist.2 <- hist(japanese$user_stars)
+abline(v = median(japanese$user_stars), col = "blue", lwd = 2)
+abline(v = mean(japanese$user_stars), col = "red", lwd = 2)
+hist.3 <- hist(korean$user_stars)
+abline(v = median(korean$user_stars), col = "blue", lwd = 2)
+abline(v = mean(korean$user_stars), col = "red", lwd = 2)
+hist.4 <- hist(se_asian$user_stars)
+abline(v = median(se_asian$user_stars), col = "blue", lwd = 2)
+abline(v = mean(se_asian$user_stars), col = "red", lwd = 2)
+title("Figure3.1: Histogram of stars rated by users toward each four styles of restaurants", outer=T)
+```
+
+###In the figure3.1, the red line represents the mean and the blue line stands for the median, we can see that all restaurants have a median of 4 stars rated by customers while Chinese restaurants have a lower mean than Japanese and Southeast Asian restaurants and Korean restaurants have a higher mean. We also can tell that for Japanese, Korean and Southeast Asian restaurants, the most frequent star rated by customers is 5 and the trend for rating from 2 stars to 5 stars is increasing. While for Chinese restaurants, the most frequent star of rating is 4 which is different from another three types of restaurants. Moreover, all these four style of restaurants  have more 1-star ratings than 2-star ratings and it's more clear existed among Chinese restaurants.
+
+##3.2 Histogram of average stars of each four styles of restaurants
+
+```{r}
+par(mfrow=c(2,2))
+hist(chinese$restaurant_stars,axes = F)
+axis(2)
+axis(1, at=seq(1,5, by=0.5), labels=seq(1,5, by=0.5))
+abline(v = median(chinese$restaurant_stars), col = "blue", lwd = 2)
+abline(v = mean(chinese$restaurant_stars), col = "red", lwd = 2)
+hist(japanese$restaurant_stars,axes = F)
+axis(1, at=seq(1,5, by=0.5), labels=seq(1,5, by=0.5))
+axis(2)
+abline(v = median(japanese$restaurant_stars), col = "blue", lwd = 2)
+abline(v = mean(japanese$restaurant_stars), col = "red", lwd = 2)
+hist(korean$restaurant_stars,axes = F)
+axis(1, at=seq(1,5, by=0.5), labels=seq(1,5, by=0.5))
+axis(2)
+abline(v = median(korean$restaurant_stars), col = "blue", lwd = 2)
+abline(v = mean(korean$restaurant_stars), col = "red", lwd = 2)
+hist(se_asian$restaurant_stars,axes = F)
+axis(1, at=seq(1,5, by=0.5), labels=seq(1,5, by=0.5))
+axis(2)
+abline(v = median(se_asian$restaurant_stars), col = "blue", lwd = 2)
+abline(v = mean(se_asian$restaurant_stars), col = "red", lwd = 2)
+title("Figure3.2: Histogram of average stars of each four styles of restaurants", outer=TRUE)
+```
+
+###In the figure3.2, the red line represents the mean and the blue line stands for the median, we can see that Chinese restaurants have the lowest mean and median of average stars at 3.5 while other three types of restuarants have median stars at 4 and mean higher than 3.5 closing to 4. And from the histogram we can tell that a majority of Chinese, Japanese and Southeast Asian restaurants have avrage stars of 3.5 or 4, less restaurants have average 4.5 stars. Compared to these three types of restaurants, Korean restaurants seem to have better rating that most restaurants have averagr 4or 4.5 stars, and then 3.5 even though the meadian and mean is relatively same as Southeast Asian and Japanese restaurants.
+
+
+##3.3 Stacked bar plot of count of stars within each predictor.
+
+```{r}
+style_stars <- yelp %>%
+  dplyr::group_by(restaurant_style)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+style.1 <- ggplot() + geom_bar(aes(y = n, x = restaurant_style, fill = factor(user_stars)), data = style_stars, stat="identity")
+style.2 <- ggplot() + geom_bar(aes(y = percent, x = restaurant_style, fill = factor(user_stars)), data = style_stars, stat="identity")
+```
+
+```{r}
+WiFi_stars <- yelp %>%
+  dplyr::group_by(restaurant_WiFi)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+wifi.1 <- ggplot() + geom_bar(aes(y = n, x = restaurant_WiFi, fill = factor(user_stars)), data = WiFi_stars, stat="identity")
+wifi.2 <- ggplot() + geom_bar(aes(y = percent, x = restaurant_WiFi, fill = factor(user_stars)), data = WiFi_stars, stat="identity")
+```
+
+```{r}
+price_stars <- yelp %>%
+  dplyr::group_by(restaurant_price_range)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+price.1 <- ggplot() + geom_bar(aes(y = n, x = restaurant_price_range, fill = factor(user_stars)), data = price_stars, stat="identity")
+price.2 <- ggplot() + geom_bar(aes(y = percent, x = restaurant_price_range, fill = factor(user_stars)), data = price_stars, stat="identity")
+```
+
+```{r}
+garage_stars <- yelp %>%
+  dplyr::group_by(garage_parking)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+garage.1 <- ggplot() + geom_bar(aes(y = n, x = garage_parking, fill = factor(user_stars)), data = garage_stars, stat="identity")
+garage.2 <- ggplot() + geom_bar(aes(y = percent, x = garage_parking, fill = factor(user_stars)), data = garage_stars, stat="identity")
+```
+
+```{r}
+street_stars <- yelp %>%
+  dplyr::group_by(street_parking)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+street.1 <- ggplot() + geom_bar(aes(y = n, x = street_parking, fill = factor(user_stars)), data = street_stars, stat="identity")
+street.2 <- ggplot() + geom_bar(aes(y = percent, x = street_parking, fill = factor(user_stars)), data = street_stars, stat="identity")
+```
+
+```{r}
+validated_stars <- yelp %>%
+  dplyr::group_by(validated_parking)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+validated.1 <- ggplot() + geom_bar(aes(y = n, x = validated_parking, fill = factor(user_stars)), data = validated_stars, stat="identity")
+validated.2 <- ggplot() + geom_bar(aes(y = percent, x = validated_parking, fill = factor(user_stars)), data = validated_stars, stat="identity")
+```
+
+```{r}
+lot_stars <- yelp %>%
+  dplyr::group_by(lot_parking)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+lot.1 <- ggplot() + geom_bar(aes(y = n, x = lot_parking, fill = factor(user_stars)), data = lot_stars, stat="identity")
+lot.2 <- ggplot() + geom_bar(aes(y = percent, x = lot_parking, fill = factor(user_stars)), data = lot_stars, stat="identity")
+```
+
+```{r}
+valet_stars <- yelp %>%
+  dplyr::group_by(valet_parking)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+valet.1 <- ggplot() + geom_bar(aes(y = n, x = valet_parking, fill = factor(user_stars)), data = valet_stars, stat="identity")
+valet.2 <- ggplot() + geom_bar(aes(y = percent, x = valet_parking, fill = factor(user_stars)), data = valet_stars, stat="identity")
+```
+
+```{r}
+noise_stars <- yelp %>%
+  dplyr::group_by(restaurant_noise_level)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+noise.1 <- ggplot() + geom_bar(aes(y = n, x = restaurant_noise_level, fill = factor(user_stars)), data = noise_stars, stat="identity")
+noise.2 <- ggplot() + geom_bar(aes(y = percent, x = restaurant_noise_level, fill = factor(user_stars)), data = noise_stars, stat="identity")
+```
+
+```{r}
+TV_stars <- yelp %>%
+  dplyr::group_by(restaurant_TV)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+tv.1 <- ggplot() + geom_bar(aes(y = n, x = restaurant_TV, fill = factor(user_stars)), data = TV_stars, stat="identity")
+tv.2 <- ggplot() + geom_bar(aes(y = percent, x = restaurant_TV, fill = factor(user_stars)), data = TV_stars, stat="identity")
+```
+
+```{r}
+outdoor_stars <- yelp %>%
+  dplyr::group_by(restaurant_outdoor_seating)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+outdoor.1 <- ggplot() + geom_bar(aes(y = n, x = restaurant_outdoor_seating, fill = factor(user_stars)), data = outdoor_stars, stat="identity")
+outdoor.2 <- ggplot() + geom_bar(aes(y = percent, x = restaurant_outdoor_seating, fill = factor(user_stars)), data = outdoor_stars, stat="identity")
+```
+
+```{r}
+useraverage_stars <- yelp %>%
+  dplyr::group_by(user_average_stars)%>%
+  dplyr::count(user_stars)%>%
+  dplyr::mutate(percent = n/sum(n))
+avg.1 <- ggplot() + geom_jitter(aes(y = user_stars, x = user_average_stars, color = factor(user_stars)), data = useraverage_stars)
+
+avg.2 <- ggplot() + geom_bar(aes(y = percent, x = user_average_stars, fill = factor(user_stars)), data = useraverage_stars, stat="identity")
+```
+
+```{r,fig.height=15,fig.width=15}
+grid.arrange(style.1,wifi.1,price.1,garage.1,street.1,validated.1,lot.1,valet.1,noise.1,tv.1,outdoor.1,ncol = 3,bottom = "Figure3.3: Stacked bar plot of count of stars within each predictor")
+```
+
+###In figure3.3, we can see the count of each variable and stars rated by customers. 
+###- In the first graph, the number of southeast asian restaurants is more than Japanese restaurants, than Chinese restaurants, Korean restaurants have the least number. In each category, the count of stars is increasing from 1 star to 5 stars.
+###- In the second graph, a vast majority of restaurants don't have WiFi, about 1/3 restaurants have free WiFi, just about a hundred restaurants have paid WiFi. In each category, the count of stars is increasing from 1 star to 5 stars.
+###- In the third graph, more than 300000 restaurants are in price range 2 which is the second cheap range, and then is the cheapest range 1 which has more than 100000 restaurants. The sum of restaurants in range 3 and range 4 are less than 30000. In each category, the count of stars is increasing from 1 star to 5 stars.
+###- In the fourth to eighth graphs, showing whether a restaurants has garage, street parking, parking lot, valet parking and validated parking. Besides parking lots, more restaurants don't have garage, valet parking, validated parking and street parking while more restaurants have parking lots. For validated parking, there is too few restaurants got.
+###- In the ninth graph, the noise of restaurants is grouped by 4 categories: quiet, average, loud and very loud. The most restaurants, more than 350000, have an average noise level, less than 100000 restaurants have a quiet level and the rest of restaurants have loud or very loue noise level.
+###- In the tenth graph, we can see that about 1/2 restaurants have TV and the other 1/2 don't have. Even the number of restaurants who have TV is a little bit smaller than the number of restaurants who don't have TV, the number of 5-star ratings of restaurants having TV is more and in each category, the count of stars is increasing from 1 star to 5 stars.
+###- In the eleventh graph, we can see that more than 350000 restaurants don't have outdoor seatings, less than 100000 restaurants have outdoor seating. In each category, the count of stars is increasing from 1 star to 5 stars.
+
+##3.4 Stacked bar plot of percentage of stars within each predictor.
+
+```{r,fig.width=15,fig.height=15}
+grid.arrange(style.2,wifi.2,price.2,garage.2,street.2,validated.2,lot.2,valet.2,noise.2,tv.2,outdoor.2,ncol = 3,bottom = "Figure3.4: Stacked bar plot of percentage of stars within each predictor")
+```
+
+###In figure3.4, we can see the percent of stars rated by customers in each variable.
+###- In the first graph, the percent of 5-star ratings among Japanses, Korean and Southeast Asian restaurants are relatively same and they are higher than those of Chinese restaurants'.
+###- In the second graph, the restaurants with free WiFi have the bigger proportion of 5-star rating, and then is paid WiFi and the last is no WiFi. It seems that as long as there is a WiFi, higher chance to be rated of higher score.
+###- In the third graph, a clear rise of percent of 5-star rating between restaurants within price range 4 and restaurants within other three ranges. So it's kind of contradictory that people want to find a restaurant inexpensive. But we should be reminded that the absolute number of restaurants within range 4 is highly small which means this part of rating may be rated by higher income people who seek for high quality of the restaurants like decoration which may lead to higher cost.
+###- In the fourth to eighth graphs, showing whether a restaurants has garage, street parking, parking lot, valet parking and validated parking. It shows that restaurants without garage or without street parking or without valet parking tend to have higher proportion of 5-star ratings while restaurants having parking lots and validated parking tend to have higher proportion of 5-star ratings.
+###- In the ninith graph, we can see that restaurants are in quiet level and average noise level are going to have higher percent of 5-star ratings while loud and very loud restaurants result in lower proportion of 5-star ratings.
+###- In the tenth graph, restaurnts having TV tend to have a 5% to 6% higher proportion of 5-star ratings than restaurants without TVs.
+###- In the eleventh graph, we can see that whether restaurants having or not having outdoor seatings rarely have influence on the proportion of 5-star ratings.
+
+\newpage
+# 4.Model fitting & Analysis
+
+##4.1 Linear Regression with Mixed Effects
+
+###I fit 3 types of linear models in this section. First, I use four datasets to fit four models of each style individually. Second I use the sample dataset, treating four styles as fixed effect to fit a model with no pooling of style. Third, I use the sample dataset to fit a model treating styles as random effects. All these three models contain the variables I selected in section3 and besides, all these three models are including variable 'city:state' as random effect by varing intercepts.
+
+###4.1.1 Fit model individually with respect to the style of restaurants
+
+### First I fit the model only with data of Chinese restaurants.
+###Model 1
+$Star_{[i]} = \beta_0 + \beta_1 WiFi_i + \beta_2 PriceRange_i + \beta_3 Garage_i + \beta_4 StreetParking_i + \beta_5 ValidatedParking_i + \beta_6 ParkingLot_i + \beta_7 ValetParking_i + \beta_8 NoiseLevel_i + \beta_9 TV_i + \beta_10 OutdoorSeating_i + City:State_{j[i]}$
+where $City:State_j \sim N(\mu_{City:State},\sigma^2_{City:State})$
+
+Only with the data of Chinese restaurants.
+
+```{r}
+#Chinese
+chinese_fit.1 <- lmer(user_stars ~ restaurant_WiFi + restaurant_price_range + garage_parking + street_parking + validated_parking + lot_parking + valet_parking + restaurant_noise_level + restaurant_TV + restaurant_outdoor_seating + (1|restaurant_city:restaurant_state), data = chinese)
+#display(chinese_fit.1)
+
+chinese_coef <- data.frame(chinese_fit.1@beta)
+chinese_se <- data.frame(sqrt(diag(vcov(chinese_fit.1))))
+
+chinese_hat.1 <- fitted.values(chinese_fit.1)
+chinese_res.1 <- resid(chinese_fit.1)
+
+```
+
+### Second I fit the model only with data of Japanese restaurants.
+###Model 2
+$Star_{[i]} = \beta_0 + \beta_1 WiFi_i + \beta_2 PriceRange_i + \beta_3 Garage_i + \beta_4 StreetParking_i + \beta_5 ValidatedParking_i + \beta_6 ParkingLot_i + \beta_7 ValetParking_i + \beta_8 NoiseLevel_i + \beta_9 TV_i + \beta_10 OutdoorSeating_i + City:State_{j[i]}$
+where $City:State_j \sim N(\mu_{City:State},\sigma^2_{City:State})$
+
+Only with the data of Japanese restaurants.
+
+```{r}
+#Japanese
+japanese_fit.1 <- lmer(user_stars ~ restaurant_WiFi + restaurant_price_range + garage_parking + street_parking + validated_parking + lot_parking + valet_parking + restaurant_noise_level + restaurant_TV + restaurant_outdoor_seating + (1|restaurant_city:restaurant_state), data = japanese)
+#display(japanese_fit.1)
+
+japanese_coef <- data.frame(japanese_fit.1@beta)
+japanese_se <- data.frame(sqrt(diag(vcov(japanese_fit.1))))
+
+japanese_hat.1 <- fitted.values(japanese_fit.1)
+japanese_res.1 <- resid(japanese_fit.1)
+
+```
+
+### Third I fit the model only with data of Korean restaurants.
+###Model 3
+$Star_{[i]} = \beta_0 + \beta_1 WiFi_i + \beta_2 PriceRange_i + \beta_3 Garage_i + \beta_4 StreetParking_i + \beta_5 ValidatedParking_i + \beta_6 ParkingLot_i + \beta_7 ValetParking_i + \beta_8 NoiseLevel_i + \beta_9 TV_i + \beta_10 OutdoorSeating_i + City:State_{j[i]}$
+where $City:State_j \sim N(\mu_{City:State},\sigma^2_{City:State})$
+Only with the data of Korean restaurants.
+
+```{r}
+#Korean
+korean_fit.1 <- lmer(user_stars ~ restaurant_WiFi + restaurant_price_range + garage_parking + street_parking + validated_parking + lot_parking + valet_parking + restaurant_noise_level + restaurant_TV + restaurant_outdoor_seating + (1|restaurant_city:restaurant_state), data = korean)
+#display(korean_fit.1)
+
+korean_coef <- data.frame(korean_fit.1@beta)
+korean_se <- data.frame(sqrt(diag(vcov(korean_fit.1)))) 
+
+korean_hat.1 <- fitted.values(korean_fit.1)
+korean_res.1 <- resid(korean_fit.1)
+
+```
+
+### Finally I fit the model only with data of Southeast Asian restaurants.
+###Model 4
+$Star_{[i]} = \beta_0 + \beta_1 WiFi_i + \beta_2 PriceRange_i + \beta_3 Garage_i + \beta_4 StreetParking_i + \beta_5 ValidatedParking_i + \beta_6 ParkingLot_i + \beta_7 ValetParking_i + \beta_8 NoiseLevel_i + \beta_9 TV_i + \beta_10 OutdoorSeating_i + City:State_{j[i]}$
+where $City:State_j \sim N(\mu_{City:State},\sigma^2_{City:State})$
+Only with the data of Southeast Asian restaurants.
+
+```{r}
+#Southeast Asian
+se_asian_fit.1 <- lmer(user_stars ~ restaurant_WiFi + restaurant_price_range + garage_parking + street_parking + validated_parking + lot_parking + valet_parking + restaurant_noise_level + restaurant_TV + restaurant_outdoor_seating + (1|restaurant_city:restaurant_state), data = se_asian)
+#display(se_asian_fit.1)
+
+se_coef <- data.frame(se_asian_fit.1@beta)
+se_se <- data.frame(sqrt(diag(vcov(se_asian_fit.1)))) 
+
+seasian_hat.1 <- fitted.values(se_asian_fit.1)
+seasian_res.1 <- resid(se_asian_fit.1)
+```
+
+
+###Check the residual plot
+
+```{r,fig.width=10,fig.height=6}
+par(mfrow=c(2,2))
+binnedplot(chinese_hat.1,chinese_res.1, main = "Figure4.3: Binned residual plot(Chinese)")
+binnedplot(japanese_hat.1,japanese_res.1, main = "Figure4.4: Binned residual plot(Japanese)")
+binnedplot(korean_hat.1,korean_res.1, main = "Figure4.5: Binned residual plot(Korean)")
+binnedplot(seasian_hat.1,seasian_res.1, main = "Figure4.6: Binned residual plot(Southeast Asian)")
+```
+
+###From figure4.3 to figure4.6, we can see the graphs of residual for each model. Basically, the residual plots look relatively good since most residuals are less than 0.5 the plots show symmetrical form. The model of Korean restaurants and Southeast Asian are better than another two because the residual of Korean restaurants are smoothly closer to zero rather than showing a kind of circle or round around axis. And the residual of Southeast Asian restaurants have a narrower range of (-0.6,0.6) which is better than (-1.0,1.0), it means the model for Southeast Asian restaurants is fiteed precisely.
+
+### Compare the coefficients table
+
+```{r}
+coefs <- cbind(chinese_coef,japanese_coef,se_coef)
+
+rownames(coefs) <- c("Intercept","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","restaurant_price_range4","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1")
+
+coefs[1:5,4] <- korean_coef[1:5,1]
+coefs[6,4] <- NA
+coefs[7:16,4] <- korean_coef[6:15,1]
+
+colnames(coefs) <- c("Chinese","Japanese","Southeast Asian","Korean")
+
+kable(coefs)
+```
+
+###From the coefficients' table, we can see a lot of informations through comparing the coefficients across each style of restaurants.
+###- For intercept, Korean restaurants have the highest average stars of 4.36 rated by customers, 0.5 higher than the second restaurants  of Southeast Asian. Chinese restaurants have a lowest average stars of 3.4. 
+###- For WiFi variable, the customes rating koreans restaurants are more sensitive to the unavailability of WiFi. It decreases 0.31 of stars compared to the Korean restaurants who have free WiFi. While for the paid WiFi, Chinese restaurants and Jpanese restaurants who have paid WiFi tend to have a more than 0.3-stars ratings than restaurants who have free WiFi, which is counterintuitive except for the paid  WiFi may be much faster than free WiFi.
+###- For price range variable, the 2-price-range Chinese restaurants and Japanese restaurants tend to have lower ratings than 1-price-range restaurants. The 3&4-price-range Chinese and Japanese restaurants are going to have higher ratings than 1-price-range restaurants. For Southeast Asian restaurants, the ratings tend to increase along with the rise of price range, the 4-price-range Southeast Asian reastaurants are going to have 0.6 higher ratings than 1-price-range restaurants on average. Well for Korean restaurants, our sample data does not contain the 4-price-range restaurants, but with the rise from 1 to 3 price range, the ratings of restaurants are going to decrease and the average rating of 3-price-range Korean restaurants tend to have 0.7 stars lower than 1-price-range restaurangs. By summary, 4-price-range Chinese restaurants, 3-price-range Japanese restaurants, 4-price-range Southeast Asian restaurants and 1-price-star Korean restaurants tend to have the highest ratings among each style with respect to price range.
+###- For variables contain parking informations, Chinese restaurants who have garage, street parking, parking lots and validated parking tend to have higher ratings than without these conditions especially of a 0.3 higher rating of restaurants who have validated parking than who don't have, while the restaurants with valet parking tend to have 0.1 lower ratings than restaurants without valet parking. Japanses restaurants who have who have street parking, validated parking and parking lots tend to have 0.13, 0.13 and 0.03 higher ratings than without these conditions, while for Japanese restaurants who have garage and valet parking tend to have 0.13 and 0.23 lower ratings than without these conditions. Southeast Asian restaurants with street parking, validated parking and parking lots tend to have 0.16, 0.22 and 0.11 higher ratings than restaurants without these consitions, while Southeast Asian restaurants with garage and valet parking tend to have 0.28 and 0.21 lower ratings than restaurants with garage and valet parking. For Korean restaurants with garage, street parking, validated parking and parking lots tend to have 0.69,0.14, 0.33 and 0.003 lower ratings than restaurants with these conditions. But for Korean restaurants with valet parking tend to have 0.57 higher ratings than restaurants who don't have valet parking.
+###- For noise level variable, the baseline is average noise level, the coefficients of noise level of models for Chinese and Korean restaurants kind of make sense since louder noise level tend to have lower average ratings and quieter noise level tend to have higher ratings. For example, Chinese restaurants with quiet noise level tend to have 0.70 higher stars than average-noise-level restaurants and restaurants with loud and very loud noise level tend to have 0.10 and 0.84 lower ratings than restaurants with average noise level, similar as Korean restaurants.  While quiet and very loud Jpanaese restaurants seem to have around 0.17 higher ratings than restaurants with  average noise level but loud-noise Japanese restaurants tend to have 0.08 lower ratings. Only very loud Southeast Asian restaurants tend to have 0.74 lower ratings while loud and quiet restaurants seem to have same ratings as average restaurants since the coefficients are around 0.01.
+###- For having or not having a TV as a variable, Chinese restaurants with TV tend to have 0.08 higher ratings and Japanese, Korean and Southeast Asian restaurants may have 0.05, 0.03 and 0.01 lower ratings than restaurants without TV.
+###- For having or not having outdoor seatings, except for Korean restaurants having outdoor seatings tend to have 0.03 higher ratings, Chinese, Japanese and Southeast Asian restaurants with outdoor seatings may have 0.12, 0.06 and 0.04 lower ratings compared to restaurants without outdoor seatings.
+
+
+```{r}
+chinese_coef$se <- chinese_se$sqrt.diag.vcov.chinese_fit.1...
+chinese_coef$variable <- c("Intercept","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","restaurant_price_range4","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1")
+colnames(chinese_coef)[1] <- "coefficients"
+chinese_coef$ymin <- chinese_coef$coefficients - 1.96*chinese_coef$se
+chinese_coef$ymax <- chinese_coef$coefficients + 1.96*chinese_coef$se
+### Calculate 95% confidence interval of coefficients and check the statistical significance
+chinese_coef <- chinese_coef[-1,]
+chinese_ci <- ggplot(chinese_coef,aes(x=variable, y=coefficients, ymin= ymin,ymax= ymax)) + geom_pointrange(colour=ifelse(chinese_coef$ymin < 0 & chinese_coef$ymax > 0, "red", "blue")) + theme_bw()  + coord_flip()  + xlab('Variable') + ylab('') + geom_hline(yintercept = 0, color = "red") +  labs(title = "Figure4.5: Coefficients and 95 %CI(Chinese)")
+```
+
+```{r}
+japanese_coef$se <- japanese_se$sqrt.diag.vcov.japanese_fit.1...
+japanese_coef$variable <- c("Intercept","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","restaurant_price_range4","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1")
+colnames(japanese_coef)[1] <- "coefficients"
+japanese_coef$ymin <- japanese_coef$coefficients - 1.96*japanese_coef$se
+japanese_coef$ymax <- japanese_coef$coefficients + 1.96*japanese_coef$se
+japanese_coef <- japanese_coef[-1,]
+japanese_ci <- ggplot(japanese_coef,aes(x=variable, y=coefficients, ymin= ymin,ymax= ymax)) + geom_pointrange(colour=ifelse(japanese_coef$ymin < 0 & japanese_coef$ymax > 0, "red", "blue")) + theme_bw()  + coord_flip()  + xlab('Variable') + ylab('') + geom_hline(yintercept = 0, color = "red") + labs(title = "Figure4.6: Coefficients and 95% CI(Japanese)")
+```
+
+
+```{r}
+korean_coef$se <- korean_se$sqrt.diag.vcov.korean_fit.1...
+korean_coef$variable <- c("Intercept","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1")
+colnames(korean_coef)[1] <- "coefficients"
+korean_coef$ymin <- korean_coef$coefficients - 1.96*korean_coef$se
+korean_coef$ymax <- korean_coef$coefficients + 1.96*korean_coef$se
+korean_coef <- korean_coef[-1,]
+korean_ci <- ggplot(korean_coef,aes(x=variable, y=coefficients, ymin= ymin,ymax= ymax)) + geom_pointrange(colour=ifelse(korean_coef$ymin < 0 & korean_coef$ymax > 0, "red", "blue")) + theme_bw()  + coord_flip()  + xlab('Variable') + ylab('') + geom_hline(yintercept = 0, color = "red") + labs(title = "Figure4.7: Coefficients and 95% CI(Korean)")
+```
+
+
+```{r}
+se_coef$se <- se_se$sqrt.diag.vcov.se_asian_fit.1...
+se_coef$variable <- c("Intercept","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","restaurant_price_range4","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1")
+colnames(se_coef)[1] <- "coefficients"
+se_coef$ymin <- se_coef$coefficients - 1.96*se_coef$se
+se_coef$ymax <- se_coef$coefficients + 1.96*se_coef$se
+se_coef <- se_coef[-1,]
+se_ci <- ggplot(se_coef,aes(x=variable, y=coefficients, ymin= ymin,ymax= ymax)) + geom_pointrange(colour=ifelse(se_coef$ymin < 0 & se_coef$ymax > 0, "red", "blue")) + theme_bw()  + coord_flip()  + xlab('Variable') + ylab('') + geom_hline(yintercept = 0, color = "red") + labs(title = "Figure4.8: Coefficients and 95% CI(Southeast Asian)")
+```
+
+```{r,fig.height=8,fig.width=13}
+grid.arrange(chinese_ci,japanese_ci,korean_ci,se_ci, ncol = 2)
+```
+
+###From figure4.5 to figure4.8 we can see the 95% confidence interval of each coefficients of each style of restaurants and whether it crosses the point zero, the vertical red line is the line of y = 0, if it does, the coefficient may not be significant at level 5%. For Chinese restaurants, all the coefficients seem to be significant at level 5%. For Japanese restaurants, the variable "price range" at level 2 mab be not significant since its confidence interval crosses 0 but rest of the variables are significant at level 5%. For Korean restaurants, indicators paid WiFi, having outdoor seating, quiet noise level and having parking lot are not significant at level 5%. For Southeast Asian restaurants, indicators paid WiFi, no WiFi, price range 4, having outdoor seating, quiet noise level and loud noise level are not significant at level 5%.
+
+###4.1.2 Multilevel linear model (use sample data and treat 'restaurant_style' as fixed effect)
+###Model 5
+$Star_{[i]} = \beta_0 + \beta_1 WiFi_i + \beta_2 PriceRange_i + \beta_3 Garage_i + \beta_4 StreetParking_i + \beta_5 ValidatedParking_i + \beta_6 ParkingLot_i + \beta_7 ValetParking_i + \beta_8 NoiseLevel_i + \beta_9 TV_i + \beta_10 OutdoorSeating_i + \beta_11 Style_i + City:State_{j[i]},$
+
+where $City:State_j \sim N(\mu_{City:State},\sigma^2_{City:State})$
+
+```{r}
+yelp_fit.1 <- lmer(user_stars ~ restaurant_WiFi + restaurant_price_range + garage_parking + street_parking + validated_parking + lot_parking + valet_parking + restaurant_noise_level + restaurant_TV + restaurant_outdoor_seating + restaurant_style + (1|restaurant_city:restaurant_state), data = mysample)
+#display(yelp_fit.1)
+yelp_hat.1 <- fitted.values(yelp_fit.1)
+yelp_res.1 <- resid(yelp_fit.1)
+binnedplot(yelp_hat.1,yelp_res.1,main = "Figure4.2: Binned residual plot of fitting rated stars of sample data")
+```
+
+###The binned residual plot is kind of good because the residuals drops around 0 not too unbalanced and the range of residuals is 1.2 which is considered not too high for me.
+
+```{r}
+kable(summary(yelp_fit.1)$coef[,1:2])
+```
+
+###From the coefficients table, we see that on average ratings, Southeast Asian restaurants tend to have 0.24 higher ratings, Japanese restaurants tend to have 0.42 higher ratings and Korean restaurants tend to have 0.45 higher ratings, the average star of average-noise-level Chinese restaurants without WiFi,garage,street parking, parking lot, validated parking, valet parking, TV, outdoor seating and within price range 1 is 3.5. For each variable, free WiFi, price range 4, having street parking, having validated parking, having parking lots, not having garage, not having valet parking, quiet atmosphere, having TV, not having outdoor seating will bring the restaurats higher scored ratings.
+
+```{r}
+yelp_coef.1 <- data.frame(summary(yelp_fit.1)$coef)
+yelp_coef.1$variable <- c("Intercept","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","restaurant_price_range4","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1","restaurant_styleJapanese","restaurant_styleKorean","restaurant_styleSoutheast Asian")
+colnames(yelp_coef.1)[1] <- "coefficients"
+colnames(yelp_coef.1)[2] <- "se"
+yelp_coef.1$ymin <- yelp_coef.1$coefficients - 1.96*yelp_coef.1$se
+yelp_coef.1$ymax <- yelp_coef.1$coefficients + 1.96*yelp_coef.1$se
+yelp_coef.1 <- yelp_coef.1[-1,]
+```
+
+```{r}
+yelp_ci.1 <- ggplot(yelp_coef.1,aes(x=variable, y=coefficients, ymin= ymin,ymax= ymax)) + geom_pointrange(colour=ifelse(yelp_coef.1$ymin < 0 & yelp_coef.1$ymax > 0, "red", "blue")) + theme_bw()  + coord_flip()  + xlab('Variable') + ylab('') + geom_hline(yintercept = 0, color = "red") + labs(title = "Figure4.10: Coefficients and 95% CI")
+yelp_ci.1
+```
+
+###Fron the graph of confidence intervals, we can see that only the coefficients of style of restaurant is significant at level 5%, other variables are close to zero or have big standard errors. 
+
+###4.1.3 Multilevel linear model (use sample data and treat 'restaurant_style' as random effect)
+###Model 6
+$Star_{[i]} = \beta_0 + \beta_1 WiFi_i + \beta_2 PriceRange_i + \beta_3 Garage_i + \beta_4 StreetParking_i + \beta_5 ValidatedParking_i + \beta_6 ParkingLot_i + \beta_7 ValetParking_i + \beta_8 NoiseLevel_i + \beta_9 TV_i + \beta_10 OutdoorSeating_i + Style_{k[i]} + City:State_{j[i]}$
+where $City:State_j \sim N(\mu_{City:State},\sigma^2_{City:State})$,
+and $Style_k \sim N(\mu_{Style},\sigma^2_{Style})$
+
+```{r}
+yelp_fit.2 <- lmer(user_stars ~ restaurant_WiFi + restaurant_price_range + garage_parking + street_parking + validated_parking + lot_parking + valet_parking + restaurant_noise_level + restaurant_TV + restaurant_outdoor_seating + (1|restaurant_style) + (1|restaurant_city:restaurant_state), data = mysample)
+#display(yelp_fit.2)
+yelp_random.1 <- data.frame(coef(yelp_fit.2)[1])
+yelp_random.2 <- data.frame(coef(yelp_fit.2)[2])
+yelp_hat.2 <- fitted.values(yelp_fit.2)
+yelp_res.2 <- resid(yelp_fit.2)
+binnedplot(yelp_hat.2,yelp_res.2,main = "Figure4.2: Binned residual plot of fitting rated stars of sample data")
+```
+
+###The residual plot is better than the former one since the range of residuals decreases and most residuals woule be between 0 to 0.4 which can be somewhat precise when predicting the ratings.
+
+```{r}
+kable(summary(yelp_fit.2)$coef[,1:2])
+```
+
+###This time, the average stars of a restaurant with free WiFi, at price level 1, no garage, no valet parking, no street parking, no validated parking, no parking lot, at average noise level, not having TV and without outdoor seating should be 3.7. Free WiFi, price range 4, no valet parking, having street parking, validated parking and parking lot, at quiet noise level, having TV and without outdoor seating tend to increase the stars of rating.
+
+```{r}
+yelp_coef.2 <- data.frame(summary(yelp_fit.2)$coef)
+yelp_coef.2$variable <- c("Intercept","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","restaurant_price_range4","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1")
+colnames(yelp_coef.2)[1] <- "coefficients"
+colnames(yelp_coef.2)[2] <- "se"
+yelp_coef.2$ymin <- yelp_coef.2$coefficients - 1.96*yelp_coef.2$se
+yelp_coef.2$ymax <- yelp_coef.2$coefficients + 1.96*yelp_coef.2$se
+yelp_coef.2 <- yelp_coef.2[-1,]
+yelp_ci.2 <- ggplot(yelp_coef.2,aes(x=variable, y=coefficients, ymin= ymin,ymax= ymax)) + geom_pointrange(colour=ifelse(yelp_coef.2$ymin < 0 & yelp_coef.2$ymax > 0, "red", "blue")) + theme_bw()  + coord_flip()  + xlab('Variable') + ylab('') + geom_hline(yintercept = 0, color = "red") + labs(title = "Figure4.12: Coefficients and 95% CI")
+yelp_ci.2
+```
+
+###From graph, none of our variables is significant at level 5%.
+
+
+### Interpret the varing intercepts of random effect:
+
+```{r}
+#Random effect
+random <- data.frame(matrix(c(0.1033,0.1465,0.1203,0.09686),byrow = T))
+colnames(random)[1] <- "city:state"
+rownames(random) <- c("Chinese","Japanese","Korean","Southeast Asian")
+kable(random)
+```
+
+###The random effects stand for the varing intercept of four styles of restaurants. Here is the table of four different intercepts. We can see that as we treat style as random effect, different styles of restaurants tend to have various intercept means different average ratings, Japanese tend to have the highest ratings since it has the highest random intercept 0.14, and 3.71 plus 0.14 which is the average stars of a Japanses restaurant to be 3.85 or 4 stars ratings.
+
+\newpage
+## 4.2 Multinomial Logistic Regression with no random effects
+
+###I first fit a categorical regression with the star of a user rating for a certain restaurant as response and the style, price range, noise level, parking conditions and wifi, TV and outdoor seatings of a restaurant as predictors. This model does not have random effects. 
+### Model 7: Cumulative Logit Model
+
+```{r}
+yelp_fit.3 <- vglm(ordered(user_stars) ~ restaurant_style + restaurant_WiFi + restaurant_price_range + garage_parking + street_parking + validated_parking + lot_parking + valet_parking + restaurant_noise_level + restaurant_TV + restaurant_outdoor_seating, family = cumulative(parallel = T), data = mysample)
+#summary(yelp_fit.3)
+
+y_hat.3 <- data.frame(fitted.values(yelp_fit.3))
+colnames(y_hat.3) <- c("1","2","3","4","5")
+res.3 <- data.frame(resid(yelp_fit.3, type = "response"))
+colnames(res.3) <- c("1","2","3","4","5")
+```
+
+### Check the residual of the model:
+
+```{r,fig.height=10,fig.width=15}
+par(mfrow=c(3,2))
+binnedplot(y_hat.3$`1`,res.3$`1`,main = "Binned residual plot of fitting 1 star")
+binnedplot(y_hat.3$`2`,res.3$`2`,main = "Binned residual plot of fitting 2 stars")
+binnedplot(y_hat.3$`3`,res.3$`3`,main = "Binned residual plot of fitting 3 stars")
+binnedplot(y_hat.3$`4`,res.3$`4`,main = "Binned residual plot of fitting 4 stars")
+binnedplot(y_hat.3$`5`,res.3$`5`,main = "Binned residual plot of fitting 5 stars")
+title("Figure4.1: Binned residual plots for each category of rated stars", outer=TRUE)
+```
+
+###The residual plot of 1 star is relatively good since it has the smallest range and balanced while the 4 stars and 5 stars are kind of unbalanced and having bigger range which indicating the poor precision of model fitting.
+
+### Interpret coefficients:
+
+```{r}
+model7_coef <- data.frame(coef(yelp_fit.3))
+colnames(model7_coef)[1] <- "Estimated Coefficients"
+kable(model7_coef)
+```
+
+###For Chinese restaurants has free WiFi, at price range1, no garage, street parking, parking lots, validated parking and valet parking, at average noise level, no TV and no outdoor seatings, the probability of getting 5 stars is:
+$1 - logit^{-1}(0.88) = 0.29$,
+###same calculation, we can calculate that the probabilities of Japanese, Korean and Southeast Asian restaurants under same circumstances getting  5 stars are: 0.44, 0.47 and 0.36. So the Korean restaurants tend to have higher probability to get 5 stars.
+
+### Check the coefficients' significance:
+
+```{r}
+yelp_coef.3 <- data.frame(coef(yelp_fit.3))
+yelp_coef.3$se <- sqrt(diag(vcov(yelp_fit.3)))
+yelp_coef.3$variable <- c("Intercept1","Intercept2","Intercept3","Intercept4","restaurant_styleJapanese","restaurant_styleKorean","restaurant_styleSoutheast Asian","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","restaurant_price_range4","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1")
+colnames(yelp_coef.3)[1] <- "coefficients"
+yelp_coef.3$ymin <- yelp_coef.3$coefficients - 1.96*yelp_coef.3$se
+yelp_coef.3$ymax <- yelp_coef.3$coefficients + 1.96*yelp_coef.3$se
+yelp_ci.3 <- ggplot(yelp_coef.3[5:22,],aes(x=variable, y=coefficients, ymin= ymin,ymax= ymax)) + geom_pointrange(colour=ifelse(yelp_coef.3[5:22,]$ymin < 0 & yelp_coef.3[5:22,]$ymax > 0, "red", "blue")) + theme_bw()  + coord_flip()  + xlab('Variable') + ylab('') + geom_hline(yintercept = 0, color = "red") + labs(title = "Figure4.12: Coefficients and 95% CI")
+yelp_ci.3
+```
+
+###Also only the coefficients of styles of restaurants are significant at level 5%, the rest of variables are not.
+
+
+## 5. General Findings
+###As I've stated before, my goal is to find the relationship between the ratings and restaurants' informations, and I do have found something interesting. 
+###- First, Korean and Japanese restaurants have relatively same best ratings while Chinese restaurants have the worst ratings.
+###- Second, no WiFi may not lower the rating too much but a paid WiFi is going to lower the rating by almost 0.5 star.
+###- Third, among the five parking informations, the validated parking and street parking tend to do better for the rating of restaurants, having both may halp restaurants get 0.5 star higher rating.
+###- Fourth, it seems that the restaurants within price range 4 tend to have the best rating among 4 ranges. At beginning, I thought that inexpensiveness may lead to higher rating, but something beyond the cost of food may also have impact on ratings like decorations, giving customers first impressions. 
+###- For noise level, it seems that people are okay with loud noise but can't stand with very loud noise. Very loud noise level may lower the rating 0.27 star compared to the average-noise-level restaurants.
+###- Having TV will only increase 0.12 or 0.13 star of rating which may not be an important effect. Personal guess, I think people may not have too much time watching TV via having dinner and sometimes a restaurant may only have one TV which can not been watched from all the directions for all customers, so it may not affect too much.
+###- Whether a restaurant having or not having outdoor seating has tiny negative influence on the rating.
+
+# 6. Further Discussion
+
+## 6.1 Merits and demerits
+
+###The merit of linear regression is that it's easy to interpret. But for this topic, the star of rating is ordinal and has 5 levels, the best way is to fit the multilevel multinomial logitic regression, so the demerit is the linear model may be not suitable to analyze since we only have 1,2,3,4,5 but we can calculate the 3.85 stars which will be confused. While the "MLML" is more advanced and difficult and it's harder to interpret and understand.
+
+## 6.2 Further Direction: Try using ordinal::clmm/clmm2 to fit a multinomial logistic regression with mixed effects.
+
+### (cont'd) 4.3 Multinomial Logistic Regression with mixed effects
+### Model 8: Multilevel Multinomial Logistic Regression
+
+```{r}
+yelp_fit.4 <- clmm(ordered(user_stars) ~ restaurant_WiFi + restaurant_price_range + garage_parking + street_parking + validated_parking + lot_parking + valet_parking + restaurant_noise_level + restaurant_TV + restaurant_outdoor_seating + (1|restaurant_style) + (1|restaurant_state), Hess = T,data=mysample)
+#summary(yelp_fit.4)$coefficients
+```
+
+### Coefficients:
+
+```{r}
+kable(summary(yelp_fit.4)$coefficients)
+```
+
+### Check the coefficients' significance:
+```{r}
+yelp_coef.4 <- data.frame(summary(yelp_fit.4)$coefficients)
+yelp_coef.4$variable <- c("1|2","2|3","3|4","4|5","restaurant_WiFino","restaurant_WiFipaid","restaurant_price_range2","restaurant_price_range3","restaurant_price_range4","garage_parking true","street_parking true","validated_parking true","lot_parking true","valet_parking true","restaurant_noise_levelloud","restaurant_noise_levelquiet","restaurant_noise_levelvery_loud","restaurant_TV1","restaurant_outdoor_seating1")
+colnames(yelp_coef.4)[1] <- "coefficients"
+colnames(yelp_coef.4)[2] <- "se"
+yelp_coef.4$ymin <- yelp_coef.4$coefficients - 1.96*yelp_coef.4$se
+yelp_coef.4$ymax <- yelp_coef.4$coefficients + 1.96*yelp_coef.4$se
+yelp_ci.4 <- ggplot(yelp_coef.4[5:19,],aes(x=variable, y=coefficients, ymin= ymin,ymax= ymax)) + geom_pointrange(colour=ifelse(yelp_coef.4[5:19,]$ymin < 0 & yelp_coef.4[5:19,]$ymax > 0, "red", "blue")) + theme_bw()  + coord_flip()  + xlab('Variable') + ylab('') + geom_hline(yintercept = 0, color = "red") + labs(title = "Figure4.15: Coefficients and 95% CI")
+yelp_ci.4
+```
+
+###The result also shows no variable is significant at level 5%.
+###Well, this part needs more time to learn, research and fit more types of model coping with 'Hess' and 'nAGQ' and understand the interpretation of the coefficients and varing intercepts of random effects.
+
+# Appendix:
+
+## Result of Model1:
+summary(chinese_fit.1)
+
+## Result of Model2:
+summary(japanese_fit.1)
+
+## Result of Model3:
+summary(korean_fit.1)
+
+## Result of Model4:
+summary(se_asian_fit.1)
+
+## Result of Model5:
+summary(yelp_fit.1)
+
+## Result of Model6:
+summary(yelp_fit.2)
+
+## Result of Model7:
+summary(yelp_fit.3)
+
+## Result of Model8:
+summary(yelp_fit.4)
